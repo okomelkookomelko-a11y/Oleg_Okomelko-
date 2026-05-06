@@ -15,7 +15,12 @@ ANTHROPIC_KEY = os.getenv("ANTHROPIC_KEY")
 NOTES_DIR = Path("/home/bot/my-bot/notes")
 NOTES_DIR.mkdir(exist_ok=True)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+LOG_FILE = "/home/bot/my-bot/bot.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()]
+)
 logger = logging.getLogger(__name__)
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
