@@ -43,13 +43,9 @@ async def wait_for_sms(timeout_s=300) -> str:
 
 
 async def apply_stealth(page):
-    """Minimal stealth patches without external dependency."""
-    await page.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-        Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
-        Object.defineProperty(navigator, 'languages', {get: () => ['uk-UA', 'uk', 'en-US']});
-        window.chrome = {runtime: {}};
-    """)
+    await page.add_init_script(
+        "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+    )
 
 
 async def main():
@@ -60,7 +56,7 @@ async def main():
     pwd    = cfg["password"]
     phone  = cfg["phone"]
 
-    write_status("start", "Запускаємо браузер...")
+    write_status("start", "Запускаємо браузер... v2-warmup")
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
@@ -70,38 +66,27 @@ async def main():
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--window-size=1280,800",
-                "--lang=uk-UA",
             ]
         )
         context = await browser.new_context(
             viewport={"width": 1280, "height": 800},
-            locale="uk-UA",
             user_agent=(
                 "Mozilla/5.0 (X11; Linux x86_64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
-            timezone_id="Europe/Kyiv",
         )
         page = await context.new_page()
         await apply_stealth(page)
 
-        # Catch and log any page errors
-        page.on("pageerror", lambda e: print(f"[PAGE_ERROR] {e}", flush=True))
-        page.on("console",   lambda m: print(f"[CONSOLE:{m.type}] {m.text[:120]}", flush=True)
-                             if m.type in ("error", "warning") else None)
-
-        # ── Step 1: warm up with google.com first ──────────────────────────
-        write_status("warm_up", "Відкриваємо google.com...")
+        # ── Step 1: warm up (mimic pw_test.py which works) ─────────────────
+        write_status("warm_up", "Розігріваємо браузер на google.com...")
         try:
             await page.goto("https://www.google.com", wait_until="domcontentloaded", timeout=30_000)
-            await page.screenshot(path=str(SS_DIR / "01_google.png"))
             print(f"[warm_up] title={await page.title()}", flush=True)
-            await asyncio.sleep(2)
         except Exception as e:
             print(f"[warm_up] WARN: {e}", flush=True)
+        await asyncio.sleep(2)
 
         # ── Step 2: navigate to signup ─────────────────────────────────────
         write_status("open", "Відкриваємо реєстрацію Gmail...")
@@ -156,34 +141,208 @@ async def main():
 
         # ── Step 4: birthday + gender ──────────────────────────────────────
         write_status("fill_bday", "День народження...")
+        await asyncio.sleep(3)  # wait for page transition
+        await page.screenshot(path=str(SS_DIR / "04_bday_init.png"))
+        print(f"[fill_bday] url={page.url}", flush=True)
+
+        # Dump full structure of the bday form including dropdown wrappers
         try:
-            await page.wait_for_selector('input[name="month"], #month', timeout=10_000)
-            # Try select dropdowns or input fields
-            for sel, val in [
-                ('select#month, input[name="month"]', "1"),
-                ('input[name="day"]', "15"),
-                ('input[name="year"]', "1990"),
-            ]:
-                el = page.locator(sel).first
-                tag = await el.evaluate("e => e.tagName")
-                if tag == "SELECT":
-                    await el.select_option(val)
-                else:
-                    await el.fill(val)
-                await asyncio.sleep(0.3)
-            # Gender
-            gender_sel = page.locator('select#gender, select[name="gender"]').first
-            await gender_sel.select_option("1")  # Female or first option
-            await asyncio.sleep(1)
-            await page.click('button:has-text("Далі"), button:has-text("Next")')
-            await asyncio.sleep(2)
-            await page.screenshot(path=str(SS_DIR / "04_bday.png"))
+            structure = await page.evaluate("""
+                () => {
+                    const ul = document.querySelector('ul[role="listbox"][aria-label="Month"]');
+                    if (!ul) return 'NO_MONTH_UL';
+                    const wrap = ul.closest('[jscontroller], [data-form-section], div');
+                    const out = [];
+                    let cur = ul.parentElement;
+                    let depth = 0;
+                    while (cur && depth < 6) {
+                        out.push({
+                            depth, tag: cur.tagName,
+                            classes: (cur.className||'').slice(0,80),
+                            role: cur.getAttribute('role') || '',
+                            ariaLabel: cur.getAttribute('aria-label') || '',
+                            ariaHaspopup: cur.getAttribute('aria-haspopup') || '',
+                            ariaExpanded: cur.getAttribute('aria-expanded') || '',
+                            jsaction: (cur.getAttribute('jsaction')||'').slice(0,40),
+                        });
+                        cur = cur.parentElement;
+                        depth++;
+                    }
+                    return out;
+                }
+            """)
+            print(f"[fill_bday] MONTH_PARENTS: {structure}", flush=True)
+            # Also dump siblings of the listbox
+            siblings = await page.evaluate("""
+                () => {
+                    const ul = document.querySelector('ul[role="listbox"][aria-label="Month"]');
+                    if (!ul) return 'NO_UL';
+                    const parent = ul.parentElement;
+                    return Array.from(parent.children).map(c => ({
+                        tag: c.tagName, role: c.getAttribute('role')||'',
+                        cls: (c.className||'').slice(0,60),
+                        text: (c.textContent||'').slice(0,30),
+                        ariaLabel: c.getAttribute('aria-label')||''
+                    }));
+                }
+            """)
+            print(f"[fill_bday] MONTH_SIBLINGS: {siblings}", flush=True)
         except Exception as e:
-            print(f"[fill_bday] WARN: {e} — skipping", flush=True)
+            print(f"[fill_bday] dump failed: {e}", flush=True)
+
+        try:
+            # Day, Year are normal <input type="tel">
+            await page.fill('input#day', "15")
+            await asyncio.sleep(0.3)
+            await page.fill('input#year', "1990")
+            await asyncio.sleep(0.3)
+
+            # Material Design select: click the parent div of the listbox to open it
+            # Structure: <div jsaction="JIbuQc..."><...><ul role="listbox" aria-label="Month">
+            month_root = page.locator(
+                'div:has(> div > div > div > div > ul[role="listbox"][aria-label="Month"])'
+            ).first
+            # Fallback: any ancestor div with jsaction containing rymPhb (the listbox jsname)
+            try:
+                await month_root.click(timeout=5000)
+            except Exception:
+                # Try alternative: find by listbox and click 5 levels up
+                await page.evaluate("""
+                    () => {
+                        const ul = document.querySelector('ul[role="listbox"][aria-label="Month"]');
+                        if (!ul) return;
+                        let cur = ul.parentElement;
+                        for (let i = 0; i < 5 && cur; i++) cur = cur.parentElement;
+                        if (cur) cur.click();
+                    }
+                """)
+            await asyncio.sleep(0.7)
+            # Click January option
+            try:
+                await page.locator('li[role="option"]:has-text("January"):visible').first.click(timeout=5000)
+            except Exception:
+                await page.locator('ul[role="listbox"][aria-label="Month"] li[role="option"]').first.click()
+            await asyncio.sleep(0.5)
+
+            # Gender: same pattern
+            try:
+                gender_root = page.locator(
+                    'div:has(> div > div > div > div > ul[role="listbox"][aria-label*="gender" i])'
+                ).first
+                try:
+                    await gender_root.click(timeout=5000)
+                except Exception:
+                    await page.evaluate("""
+                        () => {
+                            const ul = document.querySelector('ul[role="listbox"][aria-label*="gender" i], ul[role="listbox"][aria-label*="Gender"]');
+                            if (!ul) return;
+                            let cur = ul.parentElement;
+                            for (let i = 0; i < 5 && cur; i++) cur = cur.parentElement;
+                            if (cur) cur.click();
+                        }
+                    """)
+                await asyncio.sleep(0.7)
+                try:
+                    await page.locator('li[role="option"]:has-text("Female"):visible').first.click(timeout=3000)
+                except Exception:
+                    await page.locator('ul[role="listbox"][aria-label*="gender" i] li[role="option"]').nth(1).click()
+                await asyncio.sleep(0.5)
+            except Exception as ge:
+                print(f"[fill_bday] gender skipped: {ge}", flush=True)
+
+            await page.screenshot(path=str(SS_DIR / "04_bday_filled.png"))
+            await page.click('button:has-text("Далі"), button:has-text("Next")')
+            await asyncio.sleep(3)
+        except Exception as e:
+            print(f"[fill_bday] ERROR: {e} — taking screenshot and stopping", flush=True)
             await page.screenshot(path=str(SS_DIR / "04_bday_err.png"))
+            write_status("error", f"Birthday step failed: {str(e)[:200]}")
+            await browser.close()
+            return
 
         # ── Step 5: username ───────────────────────────────────────────────
         write_status("fill_user", "Вводимо логін...")
+        await asyncio.sleep(2)
+        await page.screenshot(path=str(SS_DIR / "05_user_init.png"))
+        print(f"[fill_user] url={page.url}", flush=True)
+
+        # Handle collectemailphone anti-bot gate
+        if "collectemailphone" in page.url or "identifier" in page.url:
+            print("[fill_user] collectemailphone gate detected — dumping elements", flush=True)
+            try:
+                all_elems = await page.evaluate("""
+                    () => {
+                        const els = document.querySelectorAll(
+                            'a, button, input, div[role="button"], div[role="link"], span[role="link"]'
+                        );
+                        return Array.from(els).map(el => ({
+                            tag: el.tagName,
+                            type: el.type || '',
+                            id: el.id || '',
+                            name: el.name || '',
+                            href: el.href || '',
+                            role: el.getAttribute('role') || '',
+                            text: (el.textContent || '').trim().slice(0, 80),
+                            ariaLabel: el.getAttribute('aria-label') || '',
+                        }));
+                    }
+                """)
+                (BASE / "page_dump.json").write_text(
+                    json.dumps(all_elems, indent=2, ensure_ascii=False)
+                )
+                print(f"[fill_user] dumped {len(all_elems)} elements to page_dump.json", flush=True)
+            except Exception as de:
+                print(f"[fill_user] dump error: {de}", flush=True)
+
+            # Try "Create account" / "Створити акаунт" links on this page
+            create_found = False
+            for sel in [
+                'a:has-text("Create account")',
+                'a:has-text("Створити акаунт")',
+                'button:has-text("Create account")',
+                'div[role="link"]:has-text("Create")',
+                'a:has-text("Create a new account")',
+                'span:has-text("Create account")',
+            ]:
+                try:
+                    loc = page.locator(sel).first
+                    if await loc.count() > 0:
+                        await loc.click(timeout=5000)
+                        create_found = True
+                        print(f"[fill_user] clicked Create account via: {sel}", flush=True)
+                        await asyncio.sleep(2)
+                        break
+                except Exception:
+                    pass
+
+            if not create_found:
+                # Enter phone number to pass the gate (Google will SMS-verify then continue signup)
+                print("[fill_user] no Create link — entering phone in emailPhone gate", flush=True)
+                try:
+                    await page.fill('input[name="emailPhone"], input#emailPhone', phone)
+                    await asyncio.sleep(0.5)
+                    await page.click('button:has-text("Далі"), button:has-text("Next")')
+                    await asyncio.sleep(3)
+                    await page.screenshot(path=str(SS_DIR / "05_after_phone_gate.png"))
+                    print(f"[fill_user] after phone gate, url={page.url}", flush=True)
+                except Exception as pe:
+                    print(f"[fill_user] phone gate failed: {pe}", flush=True)
+
+        # Modern Gmail shows suggested usernames first. Click "Create your own".
+        try:
+            create_own = page.locator(
+                'div:has-text("Create your own Gmail address"), '
+                'div:has-text("Створіть власну адресу"), '
+                'div[role="radio"]:has-text("Create"), '
+                'button:has-text("Create your own")'
+            ).first
+            if await create_own.count() > 0:
+                await create_own.click(timeout=5000)
+                await asyncio.sleep(1.5)
+                print(f"[fill_user] clicked 'Create your own'", flush=True)
+        except Exception as e:
+            print(f"[fill_user] no 'Create own' option: {e}", flush=True)
+
         try:
             await page.wait_for_selector('input[name="Username"]', timeout=15_000)
             await page.fill('input[name="Username"]', user)
@@ -193,6 +352,20 @@ async def main():
             await asyncio.sleep(3)
         except Exception as e:
             write_status("error", f"Помилка при вводі логіну: {e}")
+            # Dump form fields for diagnosis
+            try:
+                fields = await page.evaluate("""
+                    () => Array.from(document.querySelectorAll('input,button,div[role="radio"],div[role="button"]'))
+                        .slice(0, 25).map(el => ({
+                            tag: el.tagName, type: el.type||'', id: el.id||'',
+                            name: el.name||'', role: el.getAttribute('role')||'',
+                            text: (el.textContent||'').slice(0,50),
+                            ariaLabel: el.getAttribute('aria-label')||''
+                        }))
+                """)
+                print(f"[fill_user] FIELDS: {fields}", flush=True)
+            except Exception:
+                pass
             await page.screenshot(path=str(SS_DIR / "05_user_err.png"))
             await browser.close()
             return
