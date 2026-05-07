@@ -7,6 +7,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 import anthropic
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from email_tools import tool_send_email, tool_read_emails
 
 load_dotenv()
 
@@ -79,6 +80,30 @@ TOOLS = [
             "type": "object",
             "properties": {"url": {"type": "string", "description": "URL сторінки"}},
             "required": ["url"]
+        }
+    },
+    {
+        "name": "send_email",
+        "description": "Надсилає електронний лист від імені бота.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to":      {"type": "string", "description": "Email отримувача"},
+                "subject": {"type": "string", "description": "Тема листа"},
+                "body":    {"type": "string", "description": "Текст листа"}
+            },
+            "required": ["to", "subject", "body"]
+        }
+    },
+    {
+        "name": "read_emails",
+        "description": "Читає останні листи з поштової скриньки бота.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "folder": {"type": "string", "description": "Папка IMAP, напр. INBOX (за замовчуванням)"},
+                "limit":  {"type": "integer", "description": "Кількість листів (за замовчуванням 5)"}
+            }
         }
     }
 ]
@@ -165,6 +190,10 @@ def execute_tool(name: str, inputs: dict, user_id: int) -> str:
         return tool_get_datetime()
     if name == "read_url":
         return tool_read_url(inputs["url"])
+    if name == "send_email":
+        return tool_send_email(inputs["to"], inputs["subject"], inputs["body"])
+    if name == "read_emails":
+        return tool_read_emails(inputs.get("folder", "INBOX"), inputs.get("limit", 5))
     return "Невідомий інструмент."
 
 
@@ -207,7 +236,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Привіт, {user.first_name}! 👋\n"
         "Я бізнес-асистент на базі Claude з інструментами:\n\n"
-        "🧮 Розрахунки\n📝 Нотатки\n🕐 Дата і час\n🌐 Читання сайтів\n🖼 Аналіз фото\n\n"
+        "🧮 Розрахунки\n📝 Нотатки\n🕐 Дата і час\n🌐 Читання сайтів\n"
+        "🖼 Аналіз фото\n📧 Надсилання та читання пошти\n\n"
         "Команди: /start · /clear · /notes"
     )
 
