@@ -297,6 +297,7 @@ async def main():
             # Try "Create account" / "Створити акаунт" links on this page
             create_found = False
             for sel in [
+                'button:has-text("Don\'t have an email address or phone number?")',
                 'a:has-text("Create account")',
                 'a:has-text("Створити акаунт")',
                 'button:has-text("Create account")',
@@ -344,7 +345,7 @@ async def main():
             print(f"[fill_user] no 'Create own' option: {e}", flush=True)
 
         try:
-            await page.wait_for_selector('input[name="Username"]', timeout=15_000)
+            await page.wait_for_selector('input[name="Username"]', timeout=30_000)
             await page.fill('input[name="Username"]', user)
             await asyncio.sleep(1)
             await page.screenshot(path=str(SS_DIR / "05_username.png"))
