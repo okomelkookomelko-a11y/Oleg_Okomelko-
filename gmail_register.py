@@ -345,7 +345,43 @@ async def main():
             print(f"[fill_user] no 'Create own' option: {e}", flush=True)
 
         try:
-            await page.wait_for_selector('input[name="Username"]', timeout=30_000)
+            # Username may be hidden until "Create your own" radio is clicked
+            await page.wait_for_selector('input[name="Username"]', state='attached', timeout=30_000)
+            if not await page.locator('input[name="Username"]').is_visible():
+                print("[fill_user] Username hidden — clicking Create own", flush=True)
+                for csel in [
+                    'div[role="radio"]:has-text("Create")',
+                    'div[data-value="USERNAME"]',
+                    'label:has-text("Create")',
+                    'div:has-text("Create your own Gmail")',
+                ]:
+                    try:
+                        cl = page.locator(csel).first
+                        if await cl.count() > 0:
+                            await cl.click(timeout=3000)
+                            await asyncio.sleep(1.5)
+                            if await page.locator('input[name="Username"]').is_visible():
+                                print(f"[fill_user] visible after: {csel}", flush=True)
+                                break
+                    except Exception:
+                        pass
+                if not await page.locator('input[name="Username"]').is_visible():
+                    print("[fill_user] JS unhide Username", flush=True)
+                    await page.evaluate("""
+                        () => {
+                            const inp = document.querySelector('input[name="Username"]');
+                            if (!inp) return;
+                            let p = inp;
+                            for (let k = 0; k < 8; k++) {
+                                p = p.parentElement;
+                                if (!p) break;
+                                if (p.style.display === 'none') p.style.display = '';
+                                if (p.style.visibility === 'hidden') p.style.visibility = '';
+                            }
+                            inp.focus();
+                        }
+                    """)
+                    await asyncio.sleep(0.5)
             await page.fill('input[name="Username"]', user)
             await asyncio.sleep(1)
             await page.screenshot(path=str(SS_DIR / "05_username.png"))
