@@ -329,75 +329,107 @@ async def main():
                 except Exception as pe:
                     print(f"[fill_user] phone gate failed: {pe}", flush=True)
 
-        # Modern Gmail shows suggested usernames first — need to click "Create your own" radio.
-        # Enumerate all radio buttons, click the one with "create"/"own" text.
+        # Modern Gmail shows suggested usernames — click "Create your own Gmail address" radio.
+        # Actual radio elements are input[name="usernameRadio"], NOT div[role="radio"].
         print(f"[fill_user] url before radio={page.url}", flush=True)
         await page.screenshot(path=str(SS_DIR / "05_radio_page.png"))
-        try:
-            radios = page.locator('div[role="radio"]')
-            radio_count = await radios.count()
-            print(f"[fill_user] found {radio_count} div[role=radio]", flush=True)
-            for ri in range(radio_count):
-                r = radios.nth(ri)
-                txt = (await r.text_content() or '').lower()
-                print(f"[fill_user] radio[{ri}] text={txt[:60]!r}", flush=True)
-                if 'create' in txt or 'own' in txt or 'username' in txt:
-                    await r.click(force=True, timeout=5000)
-                    await asyncio.sleep(2)
-                    print(f"[fill_user] clicked radio[{ri}]", flush=True)
-                    if await page.locator('input[name="Username"]').is_visible():
-                        print(f"[fill_user] Username visible after radio[{ri}]", flush=True)
-                        break
-        except Exception as e:
-            print(f"[fill_user] radio enumeration error: {e}", flush=True)
+
+        radio_result = await page.evaluate("""
+            () => {
+                // Try div[role="radio"] first (alternate layout), then input[name="usernameRadio"]
+                let radios = [...document.querySelectorAll('div[role="radio"]')];
+                if (!radios.length)
+                    radios = [...document.querySelectorAll('input[name="usernameRadio"]')];
+                if (!radios.length) return 'no_radios';
+
+                // Find the "Create your own" option by walking up the DOM for its label text
+                let target = null;
+                for (const r of radios) {
+                    let el = r;
+                    for (let i = 0; i < 8; i++) {
+                        if (!el) break;
+                        const txt = (el.textContent || '').toLowerCase();
+                        if (txt.includes('create') || txt.includes('own') || txt.includes('gmail address')) {
+                            target = r; break;
+                        }
+                        el = el.parentElement;
+                    }
+                    if (target) break;
+                }
+                if (!target) target = radios[radios.length - 1]; // fallback: last = Create own
+
+                if (target.tagName === 'INPUT') {
+                    // Native radio: use native checked setter + full event chain
+                    const cs = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set;
+                    cs.call(target, true);
+                    target.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+                    target.dispatchEvent(new Event('change', {bubbles: true}));
+                    target.dispatchEvent(new Event('input', {bubbles: true}));
+                } else {
+                    target.click();
+                    target.dispatchEvent(new Event('click', {bubbles: true}));
+                }
+                return `clicked:${target.tagName}:idx=${radios.indexOf(target)}:${(target.textContent||'').slice(0,40)}`;
+            }
+        """)
+        print(f"[fill_user] radio click result: {radio_result}", flush=True)
+        await asyncio.sleep(2)
 
         try:
             await page.wait_for_selector('input[name="Username"]', state='attached', timeout=30_000)
-            username_visible = await page.locator('input[name="Username"]').is_visible()
-            print(f"[fill_user] Username visible={username_visible}", flush=True)
             await page.screenshot(path=str(SS_DIR / "05_before_fill.png"))
 
-            if username_visible:
-                # Standard fill — React receives proper events
-                await page.fill('input[name="Username"]', user)
-            else:
-                # React tracker hack: reset tracker then fire input event
-                print("[fill_user] using React tracker hack", flush=True)
-                await page.evaluate("""
-                    (v) => {
-                        const inp = document.querySelector('input[name="Username"]');
-                        if (!inp) return;
-                        // Reveal element
-                        let p = inp;
-                        for (let k = 0; k < 12; k++) {
-                            p = p.parentElement; if (!p) break;
-                            p.style.display = ''; p.style.visibility = ''; p.style.opacity = '1';
-                        }
-                        inp.style.display = ''; inp.style.visibility = ''; inp.style.opacity = '1';
-                        // Reset React value tracker so React sees the change
-                        const tracker = inp._valueTracker;
-                        if (tracker) tracker.setValue('');
-                        // Set value via native setter
-                        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                        setter.call(inp, v);
-                        inp.dispatchEvent(new Event('input', {bubbles: true, cancelable: true}));
-                        inp.dispatchEvent(new Event('change', {bubbles: true}));
-                        inp.focus();
+            # Always use JS React trick — page.fill() fails on hidden/React-managed inputs
+            fill_result = await page.evaluate("""
+                (v) => {
+                    const inp = document.querySelector('input[name="Username"]');
+                    if (!inp) return 'no_username_input';
+                    // Unhide element and ancestors
+                    inp.removeAttribute('hidden');
+                    inp.style.display = '';
+                    inp.style.visibility = '';
+                    inp.style.opacity = '1';
+                    let p = inp.parentElement;
+                    for (let k = 0; k < 12 && p; k++) {
+                        if (p.style.display === 'none') p.style.display = '';
+                        if (p.style.visibility === 'hidden') p.style.visibility = '';
+                        p = p.parentElement;
                     }
-                """, user)
+                    // React value setter trick
+                    const tracker = inp._valueTracker;
+                    if (tracker) tracker.setValue('');
+                    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    setter.call(inp, v);
+                    inp.dispatchEvent(new Event('input', {bubbles: true, cancelable: true}));
+                    inp.dispatchEvent(new Event('change', {bubbles: true}));
+                    inp.focus();
+                    return `filled=${inp.value}`;
+                }
+            """, user)
+            print(f"[fill_user] username JS fill: {fill_result}", flush=True)
             await asyncio.sleep(1)
             await page.screenshot(path=str(SS_DIR / "05_username.png"))
+
             url_before = page.url
-            await page.click('button:has-text("Далі"), button:has-text("Next")')
             try:
-                await page.wait_for_url(lambda u: u != url_before, timeout=8000)
+                await page.click('button:has-text("Далі"), button:has-text("Next")', timeout=5000)
+            except Exception as ne:
+                print(f"[fill_user] Next click failed ({ne}), trying JS", flush=True)
+                await page.evaluate("""
+                    () => {
+                        const b = [...document.querySelectorAll('button')]
+                            .find(b => /next|далі/i.test(b.textContent));
+                        if (b) b.click();
+                    }
+                """)
+            try:
+                await page.wait_for_url(lambda u: u != url_before, timeout=10000)
             except Exception:
                 pass
             print(f"[fill_user] url after Next={page.url}", flush=True)
             await asyncio.sleep(2)
         except Exception as e:
             write_status("error", f"Помилка при вводі логіну: {e}")
-            # Dump form fields for diagnosis
             try:
                 fields = await page.evaluate("""
                     () => Array.from(document.querySelectorAll('input,button,div[role="radio"],div[role="button"]'))
