@@ -512,24 +512,80 @@ async def main():
         write_status("fill_phone", "Вводимо номер телефону...")
         try:
             print(f"[fill_phone] url={page.url}", flush=True)
-            # Google uses different input names depending on the flow
+            await asyncio.sleep(3)  # let JS render
+
+            # mophoneverification/initial is a splash page — click "Add phone" to get input
+            if "mophoneverification/initial" in page.url or "initial" in page.url:
+                page_info = await page.evaluate("""
+                    () => ({
+                        text: document.body.innerText.slice(0, 300),
+                        tags: [...new Set([...document.querySelectorAll('*')].map(e => e.tagName))].join(','),
+                        roles: [...document.querySelectorAll('[role]')].map(e => ({
+                            tag: e.tagName, role: e.getAttribute('role'),
+                            text: (e.textContent||'').trim().slice(0, 60)
+                        }))
+                    })
+                """)
+                print(f"[fill_phone] splash page info: {page_info}", flush=True)
+                await page.screenshot(path=str(SS_DIR / "07_splash.png"))
+                # Try to click "Add phone" / "Get started" / "Continue"
+                nav_clicked = False
+                for nav_sel in [
+                    'button:has-text("Add phone")', 'button:has-text("Get started")',
+                    'button:has-text("Continue")', 'button:has-text("Далі")',
+                    'button:has-text("Next")', '[role="button"]:has-text("Add")',
+                    '[role="button"]:has-text("phone")', 'button',
+                ]:
+                    try:
+                        loc = page.locator(nav_sel).first
+                        cnt = await loc.count()
+                        if cnt > 0:
+                            txt = await loc.inner_text()
+                            print(f"[fill_phone] clicking nav btn: {nav_sel} text={txt!r}", flush=True)
+                            await loc.click(timeout=5000)
+                            nav_clicked = True
+                            await asyncio.sleep(3)
+                            break
+                    except Exception as ne:
+                        pass
+                if not nav_clicked:
+                    # Try JS: click the first visible button/role=button
+                    clicked_text = await page.evaluate("""
+                        () => {
+                            const btn = [...document.querySelectorAll('button,[role="button"]')]
+                                .find(b => b.offsetParent !== null);
+                            if (btn) { btn.click(); return btn.textContent.trim().slice(0, 60); }
+                            return 'no_btn';
+                        }
+                    """)
+                    print(f"[fill_phone] JS nav click: {clicked_text}", flush=True)
+                    await asyncio.sleep(3)
+                print(f"[fill_phone] after splash, url={page.url}", flush=True)
+                await page.screenshot(path=str(SS_DIR / "07_after_splash.png"))
+
+            # Now look for actual phone input
             phone_sel = None
             for sel in ['input[name="phoneNumberId"]', 'input[type="tel"]',
-                        'input[id="phoneNumberId"]', 'input[name="phoneNumber"]']:
+                        'input[id="phoneNumberId"]', 'input[name="phoneNumber"]',
+                        'input[autocomplete="tel"]']:
                 try:
-                    await page.wait_for_selector(sel, state='attached', timeout=8_000)
+                    await page.wait_for_selector(sel, state='attached', timeout=10_000)
                     phone_sel = sel
                     print(f"[fill_phone] found phone input: {sel}", flush=True)
                     break
                 except Exception:
                     pass
             if not phone_sel:
-                inputs = await page.evaluate("""
-                    () => Array.from(document.querySelectorAll('input,button')).map(
-                        e => ({tag:e.tagName,type:e.type||'',name:e.name||'',id:e.id||'',
-                               ph:e.placeholder||'',text:(e.textContent||'').slice(0,40)}))
+                page_dump = await page.evaluate("""
+                    () => ({
+                        url: location.href,
+                        text: document.body.innerText.slice(0, 400),
+                        inputs: Array.from(document.querySelectorAll('input,button,[role="button"],[role="textbox"]')).map(
+                            e => ({tag:e.tagName, type:e.type||'', name:e.name||'', id:e.id||'',
+                                   role:e.getAttribute('role')||'', text:(e.textContent||'').slice(0,40)}))
+                    })
                 """)
-                print(f"[fill_phone] NO PHONE INPUT. inputs={inputs}", flush=True)
+                print(f"[fill_phone] NO PHONE INPUT after splash. dump={page_dump}", flush=True)
                 await page.screenshot(path=str(SS_DIR / "07_phone_notfound.png"))
                 write_status("error", f"Не знайдено поле телефону. URL={page.url}")
                 await browser.close()
