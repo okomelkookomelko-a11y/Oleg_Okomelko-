@@ -29,8 +29,12 @@ def load_config():
 
 
 async def wait_for_sms(timeout_s=300) -> str:
-    """Poll sms_code.txt for up to timeout_s seconds."""
+    """Poll sms_code.txt and GitHub cmds/sms_code.txt for SMS code."""
     SMS_FILE.unlink(missing_ok=True)
+    import urllib.request as _ureq, base64 as _b64
+    gh_token = os.getenv("GH_TOKEN", "")
+    gh_repo = os.getenv("GH_REPO", "okomelkookomelko-a11y/my-bot")
+    gh_sms_url = f"https://api.github.com/repos/{gh_repo}/contents/cmds/sms_code.txt"
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if SMS_FILE.exists():
@@ -38,7 +42,20 @@ async def wait_for_sms(timeout_s=300) -> str:
             if code:
                 SMS_FILE.unlink(missing_ok=True)
                 return code
-        await asyncio.sleep(3)
+        if gh_token:
+            try:
+                req = _ureq.Request(
+                    gh_sms_url,
+                    headers={"Authorization": f"token {gh_token}",
+                             "Accept": "application/vnd.github.v3+json"})
+                resp = json.loads(_ureq.urlopen(req, timeout=10).read())
+                code = _b64.b64decode(resp["content"]).decode().strip()
+                if code:
+                    print(f"[wait_sms] got code from GitHub repo", flush=True)
+                    return code
+            except Exception:
+                pass
+        await asyncio.sleep(10)
     return ""
 
 
