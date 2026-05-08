@@ -57,17 +57,25 @@ async def main():
     phone  = cfg["phone"]
 
     write_status("start", "Запускаємо браузер... v2-warmup")
+    print("[start] before playwright init", flush=True)
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-blink-features=AutomationControlled",
-            ]
-        )
+        print("[start] playwright init ok", flush=True)
+        try:
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-blink-features=AutomationControlled",
+                ]
+            )
+        except Exception as e:
+            write_status("error", f"Browser launch failed: {e}")
+            print(f"[start] BROWSER_LAUNCH_FAILED: {type(e).__name__}: {e}", flush=True)
+            return
+        print("[start] browser launched ok", flush=True)
         context = await browser.new_context(
             viewport={"width": 1280, "height": 800},
             user_agent=(
@@ -76,16 +84,21 @@ async def main():
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
         )
+        print("[start] context created", flush=True)
         page = await context.new_page()
+        print("[start] page created", flush=True)
         await apply_stealth(page)
+        print("[start] stealth applied", flush=True)
 
         # ── Step 1: warm up (mimic pw_test.py which works) ─────────────────
         write_status("warm_up", "Розігріваємо браузер на google.com...")
+        print("[warm_up] before goto", flush=True)
         try:
             await page.goto("https://www.google.com", wait_until="domcontentloaded", timeout=30_000)
             print(f"[warm_up] title={await page.title()}", flush=True)
         except Exception as e:
-            print(f"[warm_up] WARN: {e}", flush=True)
+            print(f"[warm_up] WARN type={type(e).__name__}: {e}", flush=True)
+        print("[warm_up] after goto", flush=True)
         await asyncio.sleep(2)
 
         # ── Step 2: navigate to signup ─────────────────────────────────────
@@ -553,4 +566,10 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import traceback
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"[FATAL] {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
+        sys.exit(1)
