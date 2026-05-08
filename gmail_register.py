@@ -329,87 +329,72 @@ async def main():
                 except Exception as pe:
                     print(f"[fill_user] phone gate failed: {pe}", flush=True)
 
-        # Modern Gmail shows suggested usernames first. Click "Create your own".
+        # Modern Gmail shows suggested usernames first — need to click "Create your own" radio.
+        # Enumerate all radio buttons, click the one with "create"/"own" text.
+        print(f"[fill_user] url before radio={page.url}", flush=True)
+        await page.screenshot(path=str(SS_DIR / "05_radio_page.png"))
         try:
-            create_own = page.locator(
-                'div:has-text("Create your own Gmail address"), '
-                'div:has-text("Створіть власну адресу"), '
-                'div[role="radio"]:has-text("Create"), '
-                'button:has-text("Create your own")'
-            ).first
-            if await create_own.count() > 0:
-                await create_own.click(timeout=5000)
-                await asyncio.sleep(1.5)
-                print(f"[fill_user] clicked 'Create your own'", flush=True)
+            radios = page.locator('div[role="radio"]')
+            radio_count = await radios.count()
+            print(f"[fill_user] found {radio_count} div[role=radio]", flush=True)
+            for ri in range(radio_count):
+                r = radios.nth(ri)
+                txt = (await r.text_content() or '').lower()
+                print(f"[fill_user] radio[{ri}] text={txt[:60]!r}", flush=True)
+                if 'create' in txt or 'own' in txt or 'username' in txt:
+                    await r.click(force=True, timeout=5000)
+                    await asyncio.sleep(2)
+                    print(f"[fill_user] clicked radio[{ri}]", flush=True)
+                    if await page.locator('input[name="Username"]').is_visible():
+                        print(f"[fill_user] Username visible after radio[{ri}]", flush=True)
+                        break
         except Exception as e:
-            print(f"[fill_user] no 'Create own' option: {e}", flush=True)
+            print(f"[fill_user] radio enumeration error: {e}", flush=True)
 
         try:
-            # Username may be hidden until "Create your own" radio is clicked
             await page.wait_for_selector('input[name="Username"]', state='attached', timeout=30_000)
-            if not await page.locator('input[name="Username"]').is_visible():
-                print("[fill_user] Username hidden — clicking Create own", flush=True)
-                for csel in [
-                    'div[role="radio"]:has-text("Create")',
-                    'div[data-value="USERNAME"]',
-                    'label:has-text("Create")',
-                    'div:has-text("Create your own Gmail")',
-                ]:
-                    try:
-                        cl = page.locator(csel).first
-                        if await cl.count() > 0:
-                            await cl.click(timeout=3000)
-                            await asyncio.sleep(1.5)
-                            if await page.locator('input[name="Username"]').is_visible():
-                                print(f"[fill_user] visible after: {csel}", flush=True)
-                                break
-                    except Exception:
-                        pass
-                if not await page.locator('input[name="Username"]').is_visible():
-                    print("[fill_user] JS unhide Username", flush=True)
-                    await page.evaluate("""
-                        () => {
-                            const inp = document.querySelector('input[name="Username"]');
-                            if (!inp) return;
-                            let p = inp;
-                            for (let k = 0; k < 10; k++) {
-                                p = p.parentElement;
-                                if (!p) break;
-                                p.style.display = '';
-                                p.style.visibility = '';
-                                p.style.opacity = '1';
-                                p.removeAttribute('hidden');
-                                p.removeAttribute('aria-hidden');
-                            }
-                            inp.style.display = '';
-                            inp.style.visibility = '';
-                            inp.style.opacity = '1';
-                            inp.removeAttribute('hidden');
-                            inp.focus();
-                        }
-                    """)
-                    await asyncio.sleep(0.5)
+            username_visible = await page.locator('input[name="Username"]').is_visible()
+            print(f"[fill_user] Username visible={username_visible}", flush=True)
             await page.screenshot(path=str(SS_DIR / "05_before_fill.png"))
-            print(f"[fill_user] visible={await page.locator('input[name=\"Username\"]').is_visible()}", flush=True)
-            # Use force=True to bypass Playwright visibility check if still hidden
-            try:
-                await page.locator('input[name="Username"]').fill(user, force=True)
-            except Exception as fe:
-                print(f"[fill_user] force fill failed: {fe}, trying JS setValue", flush=True)
+
+            if username_visible:
+                # Standard fill — React receives proper events
+                await page.fill('input[name="Username"]', user)
+            else:
+                # React tracker hack: reset tracker then fire input event
+                print("[fill_user] using React tracker hack", flush=True)
                 await page.evaluate("""
                     (v) => {
                         const inp = document.querySelector('input[name="Username"]');
                         if (!inp) return;
+                        // Reveal element
+                        let p = inp;
+                        for (let k = 0; k < 12; k++) {
+                            p = p.parentElement; if (!p) break;
+                            p.style.display = ''; p.style.visibility = ''; p.style.opacity = '1';
+                        }
+                        inp.style.display = ''; inp.style.visibility = ''; inp.style.opacity = '1';
+                        // Reset React value tracker so React sees the change
+                        const tracker = inp._valueTracker;
+                        if (tracker) tracker.setValue('');
+                        // Set value via native setter
                         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
                         setter.call(inp, v);
-                        inp.dispatchEvent(new Event('input', {bubbles: true}));
+                        inp.dispatchEvent(new Event('input', {bubbles: true, cancelable: true}));
                         inp.dispatchEvent(new Event('change', {bubbles: true}));
+                        inp.focus();
                     }
                 """, user)
             await asyncio.sleep(1)
             await page.screenshot(path=str(SS_DIR / "05_username.png"))
+            url_before = page.url
             await page.click('button:has-text("Далі"), button:has-text("Next")')
-            await asyncio.sleep(3)
+            try:
+                await page.wait_for_url(lambda u: u != url_before, timeout=8000)
+            except Exception:
+                pass
+            print(f"[fill_user] url after Next={page.url}", flush=True)
+            await asyncio.sleep(2)
         except Exception as e:
             write_status("error", f"Помилка при вводі логіну: {e}")
             # Dump form fields for diagnosis
