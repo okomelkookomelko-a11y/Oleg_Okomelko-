@@ -78,6 +78,19 @@ async def main():
 
     async with async_playwright() as pw:
         print("[start] playwright init ok", flush=True)
+        # Use Tor SOCKS5 proxy if available (bypasses VPS IP block)
+        import socket as _sock
+        def _tor_available():
+            try:
+                s = _sock.create_connection(("127.0.0.1", 9050), timeout=2)
+                s.close(); return True
+            except Exception:
+                return False
+        use_tor = _tor_available()
+        print(f"[start] tor_available={use_tor}", flush=True)
+
+        tor_proxy = {"server": "socks5://127.0.0.1:9050"} if use_tor else None
+
         try:
             browser = await pw.chromium.launch(
                 headless=True,
@@ -86,7 +99,8 @@ async def main():
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
                     "--disable-blink-features=AutomationControlled",
-                ]
+                ],
+                proxy=tor_proxy,
             )
         except Exception as e:
             write_status("error", f"Browser launch failed: {e}")
