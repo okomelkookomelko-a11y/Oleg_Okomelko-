@@ -433,9 +433,24 @@ async def main():
         # ── Step 6: password ───────────────────────────────────────────────
         write_status("fill_pass", "Вводимо пароль...")
         try:
-            await page.wait_for_selector('input[name="Passwd"]', timeout=15_000)
-            await page.fill('input[name="Passwd"]',       pwd)
-            await page.fill('input[name="PasswdAgain"]',  pwd)
+            print(f"[fill_pass] url={page.url}", flush=True)
+            await page.wait_for_selector('input[name="Passwd"]', state='attached', timeout=30_000)
+            await page.screenshot(path=str(SS_DIR / "06_pass_init.png"))
+            for fname, fval in [("Passwd", pwd), ("PasswdAgain", pwd)]:
+                loc = page.locator(f'input[name="{fname}"]').first
+                try:
+                    await loc.fill(fval, force=True)
+                except Exception:
+                    await page.evaluate("""
+                        ([n, v]) => {
+                            const inp = document.querySelector(`input[name="${n}"]`);
+                            if (!inp) return;
+                            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                            setter.call(inp, v);
+                            inp.dispatchEvent(new Event('input', {bubbles: true}));
+                            inp.dispatchEvent(new Event('change', {bubbles: true}));
+                        }
+                    """, [fname, fval])
             await asyncio.sleep(1)
             await page.screenshot(path=str(SS_DIR / "06_pass.png"))
             await page.click('button:has-text("Далі"), button:has-text("Next")')
@@ -449,8 +464,22 @@ async def main():
         # ── Step 7: phone number ───────────────────────────────────────────
         write_status("fill_phone", "Вводимо номер телефону...")
         try:
-            await page.wait_for_selector('input[name="phoneNumberId"]', timeout=15_000)
-            await page.fill('input[name="phoneNumberId"]', phone)
+            print(f"[fill_phone] url={page.url}", flush=True)
+            await page.wait_for_selector('input[name="phoneNumberId"]', state='attached', timeout=30_000)
+            await page.screenshot(path=str(SS_DIR / "07_phone_init.png"))
+            try:
+                await page.locator('input[name="phoneNumberId"]').fill(phone, force=True)
+            except Exception:
+                await page.evaluate("""
+                    (v) => {
+                        const inp = document.querySelector('input[name="phoneNumberId"]');
+                        if (!inp) return;
+                        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                        setter.call(inp, v);
+                        inp.dispatchEvent(new Event('input', {bubbles: true}));
+                        inp.dispatchEvent(new Event('change', {bubbles: true}));
+                    }
+                """, phone)
             await asyncio.sleep(1)
             await page.screenshot(path=str(SS_DIR / "07_phone.png"))
             await page.click('button:has-text("Далі"), button:has-text("Next")')
