@@ -512,10 +512,19 @@ async def main():
         write_status("fill_phone", "Вводимо номер телефону...")
         try:
             print(f"[fill_phone] url={page.url}", flush=True)
-            await asyncio.sleep(3)  # let JS render
+            await asyncio.sleep(5)  # let JS render fully
 
-            # mophoneverification/initial is a splash page — click "Add phone" to get input
-            if "mophoneverification/initial" in page.url or "initial" in page.url:
+            # Check for Google error page
+            if "/error/" in page.url or "/error?" in page.url:
+                err_text = await page.evaluate("() => document.body.innerText.slice(0, 300)")
+                print(f"[fill_phone] GOOGLE ERROR PAGE: {err_text}", flush=True)
+                await page.screenshot(path=str(SS_DIR / "07_google_error.png"))
+                write_status("error", f"Google заблокував: {err_text[:150]}")
+                await browser.close()
+                return
+
+            # mophoneverification/initial is a splash/info page — probe and click through
+            if "mophoneverification" in page.url or "initial" in page.url:
                 page_info = await page.evaluate("""
                     () => ({
                         text: document.body.innerText.slice(0, 300),
