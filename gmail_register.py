@@ -512,14 +512,35 @@ async def main():
         write_status("fill_phone", "Вводимо номер телефону...")
         try:
             print(f"[fill_phone] url={page.url}", flush=True)
-            await page.wait_for_selector('input[name="phoneNumberId"]', state='attached', timeout=30_000)
+            # Google uses different input names depending on the flow
+            phone_sel = None
+            for sel in ['input[name="phoneNumberId"]', 'input[type="tel"]',
+                        'input[id="phoneNumberId"]', 'input[name="phoneNumber"]']:
+                try:
+                    await page.wait_for_selector(sel, state='attached', timeout=8_000)
+                    phone_sel = sel
+                    print(f"[fill_phone] found phone input: {sel}", flush=True)
+                    break
+                except Exception:
+                    pass
+            if not phone_sel:
+                inputs = await page.evaluate("""
+                    () => Array.from(document.querySelectorAll('input,button')).map(
+                        e => ({tag:e.tagName,type:e.type||'',name:e.name||'',id:e.id||'',
+                               ph:e.placeholder||'',text:(e.textContent||'').slice(0,40)}))
+                """)
+                print(f"[fill_phone] NO PHONE INPUT. inputs={inputs}", flush=True)
+                await page.screenshot(path=str(SS_DIR / "07_phone_notfound.png"))
+                write_status("error", f"Не знайдено поле телефону. URL={page.url}")
+                await browser.close()
+                return
             await page.screenshot(path=str(SS_DIR / "07_phone_init.png"))
             try:
-                await page.locator('input[name="phoneNumberId"]').fill(phone, force=True)
+                await page.locator(phone_sel).fill(phone, force=True)
             except Exception:
                 await page.evaluate("""
                     (v) => {
-                        const inp = document.querySelector('input[name="phoneNumberId"]');
+                        const inp = document.querySelector('input[type="tel"],input[name="phoneNumberId"],input[name="phoneNumber"]');
                         if (!inp) return;
                         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
                         setter.call(inp, v);
