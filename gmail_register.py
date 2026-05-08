@@ -372,17 +372,40 @@ async def main():
                             const inp = document.querySelector('input[name="Username"]');
                             if (!inp) return;
                             let p = inp;
-                            for (let k = 0; k < 8; k++) {
+                            for (let k = 0; k < 10; k++) {
                                 p = p.parentElement;
                                 if (!p) break;
-                                if (p.style.display === 'none') p.style.display = '';
-                                if (p.style.visibility === 'hidden') p.style.visibility = '';
+                                p.style.display = '';
+                                p.style.visibility = '';
+                                p.style.opacity = '1';
+                                p.removeAttribute('hidden');
+                                p.removeAttribute('aria-hidden');
                             }
+                            inp.style.display = '';
+                            inp.style.visibility = '';
+                            inp.style.opacity = '1';
+                            inp.removeAttribute('hidden');
                             inp.focus();
                         }
                     """)
                     await asyncio.sleep(0.5)
-            await page.fill('input[name="Username"]', user)
+            await page.screenshot(path=str(SS_DIR / "05_before_fill.png"))
+            print(f"[fill_user] visible={await page.locator('input[name=\"Username\"]').is_visible()}", flush=True)
+            # Use force=True to bypass Playwright visibility check if still hidden
+            try:
+                await page.locator('input[name="Username"]').fill(user, force=True)
+            except Exception as fe:
+                print(f"[fill_user] force fill failed: {fe}, trying JS setValue", flush=True)
+                await page.evaluate("""
+                    (v) => {
+                        const inp = document.querySelector('input[name="Username"]');
+                        if (!inp) return;
+                        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                        setter.call(inp, v);
+                        inp.dispatchEvent(new Event('input', {bubbles: true}));
+                        inp.dispatchEvent(new Event('change', {bubbles: true}));
+                    }
+                """, user)
             await asyncio.sleep(1)
             await page.screenshot(path=str(SS_DIR / "05_username.png"))
             await page.click('button:has-text("Далі"), button:has-text("Next")')
