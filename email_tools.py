@@ -9,9 +9,14 @@ from email.header import decode_header
 
 EMAIL_ADDRESS  = os.getenv("EMAIL_ADDRESS", "")
 EMAIL_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "")
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
-IMAP_HOST = "imap.gmail.com"
+
+# Defaults to Gmail; override via env vars for other providers (e.g. ukr.net)
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+IMAP_HOST = os.getenv("IMAP_HOST", "imap.gmail.com")
+IMAP_PORT = int(os.getenv("IMAP_PORT", "993"))
+# ukr.net uses SSL on port 465 for SMTP (not STARTTLS)
+SMTP_SSL  = os.getenv("SMTP_SSL", "false").lower() == "true"
 
 
 def tool_send_email(to: str, subject: str, body: str) -> str:
@@ -23,8 +28,13 @@ def tool_send_email(to: str, subject: str, body: str) -> str:
         msg["To"]      = to
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "plain", "utf-8"))
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
-            s.starttls()
+        if SMTP_SSL:
+            ctx = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30)
+        else:
+            ctx = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+        with ctx as s:
+            if not SMTP_SSL:
+                s.starttls()
             s.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             s.sendmail(EMAIL_ADDRESS, to, msg.as_string())
         return f"✅ Лист надіслано на {to}."
