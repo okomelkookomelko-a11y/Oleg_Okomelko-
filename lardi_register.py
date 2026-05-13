@@ -128,8 +128,8 @@ async def main():
         page_text2 = await page.evaluate("() => document.body.innerText.slice(0, 300)")
         print(f"[step2] text={page_text2[:150]}", flush=True)
 
-        # Select type: Підприємець
-        for txt in ["Підприємець", "Фізична особа"]:
+        # Select type: Фізична особа (no company code validation)
+        for txt in ["Фізична особа", "Підприємець"]:
             loc = page.locator(f'text="{txt}"').first
             if await loc.count() > 0:
                 await loc.click(timeout=3000)
@@ -177,18 +177,30 @@ async def main():
             except Exception as e:
                 print(f"[step3] input[{idx}] error: {e}", flush=True)
 
-        # "Звідки дізналися про нас?" — react-select-5, click and pick first option
+        # "Звідки дізналися про нас?" — click visible dropdown trigger then pick option
         try:
-            await page.evaluate("""() => {
-                const inputs = document.querySelectorAll('input[id^="react-select"]');
-                const inp = inputs[inputs.length - 1];
-                if (inp) {
-                    let el = inp.parentElement;
-                    while (el && !el.className.toString().includes('container')) el = el.parentElement;
+            # Find by text label then click the sibling dropdown
+            referral_clicked = False
+            for approach in [
+                'text="Звідки дізналися про нас?"',
+                '[class*="select"]:has-text("Оберіть")',
+                '[class*="Select"]:has-text("Оберіть")',
+            ]:
+                loc = page.locator(approach).first
+                if await loc.count() > 0:
+                    await loc.click(timeout=3000)
+                    await page.wait_for_timeout(600)
+                    referral_clicked = True
+                    print(f"[step3] referral dropdown clicked via: {approach}", flush=True)
+                    break
+            if not referral_clicked:
+                # JS click on any visible element containing "Оберіть"
+                await page.evaluate("""() => {
+                    const all = [...document.querySelectorAll('*')];
+                    const el = all.find(e => e.textContent.trim() === 'Оберіть' && e.offsetParent);
                     if (el) el.click();
-                }
-            }""")
-            await page.wait_for_timeout(600)
+                }""")
+                await page.wait_for_timeout(600)
             opt_ref = page.locator('[class*="option"]').first
             if await opt_ref.count() > 0:
                 txt_ref = await opt_ref.text_content()
@@ -244,7 +256,7 @@ async def main():
             status("done", f"Registered! Login: {CFG['login']}")
         elif "error" in body_after.lower() or "помилка" in body_after.lower():
             status("error", body_after[:200])
-        elif "вже" in body_after.lower() or "already" in body_after.lower():
+        elif any(p in body_after.lower() for p in ["вже існує", "already exists", "логін зайнятий", "email вже"]):
             status("exists", "Account already exists")
         else:
             status("unknown", f"url={url_after} body={body_after[:150]}")
