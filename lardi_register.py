@@ -13,7 +13,7 @@ CFG = {
     "first_name":  "Олег",
     "last_name":   "Коваленко",
     "patronymic":  "Іванович",
-    "company_code": "1234567890",
+    "company_code": "1234567897",  # valid ІПН checksum: sum mod11 mod10 = 7
     "phone":       "+380969824425",
     "email":       "logisticAssistance@ukr.net",
     "login":       "logasst77143",
@@ -177,6 +177,27 @@ async def main():
             except Exception as e:
                 print(f"[step3] input[{idx}] error: {e}", flush=True)
 
+        # "Звідки дізналися про нас?" — react-select-5, click and pick first option
+        try:
+            await page.evaluate("""() => {
+                const inputs = document.querySelectorAll('input[id^="react-select"]');
+                const inp = inputs[inputs.length - 1];
+                if (inp) {
+                    let el = inp.parentElement;
+                    while (el && !el.className.toString().includes('container')) el = el.parentElement;
+                    if (el) el.click();
+                }
+            }""")
+            await page.wait_for_timeout(600)
+            opt_ref = page.locator('[class*="option"]').first
+            if await opt_ref.count() > 0:
+                txt_ref = await opt_ref.text_content()
+                print(f"[step3] referral option: {txt_ref}", flush=True)
+                await opt_ref.click(timeout=3000)
+                await page.wait_for_timeout(300)
+        except Exception as e:
+            print(f"[step3] referral error: {e}", flush=True)
+
         # Password field (type=password)
         try:
             pwd_loc = page.locator('input[type="password"]').first
@@ -216,7 +237,10 @@ async def main():
         print(f"[result] url={url_after}", flush=True)
         print(f"[result] body={body_after[:400]}", flush=True)
 
-        if "dashboard" in url_after or "log/dashboard" in url_after or "cabinet" in url_after:
+        # Check for success: URL should change away from /accounts/entrepreneur/
+        registered = ("accounts/entrepreneur" not in url_after and
+                      ("dashboard" in url_after or "cabinet" in url_after or "log" in url_after.split("?")[0]))
+        if registered:
             status("done", f"Registered! Login: {CFG['login']}")
         elif "error" in body_after.lower() or "помилка" in body_after.lower():
             status("error", body_after[:200])
