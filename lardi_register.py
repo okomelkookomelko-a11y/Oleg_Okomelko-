@@ -159,17 +159,25 @@ async def main():
         inp_count = await page.locator('input[placeholder="Введіть"]').count()
         print(f"[step3] inputs with placeholder=Введіть: {inp_count}", flush=True)
 
-        # Fields order based on page: Ім'я, Прізвище, По батькові, Код компанії, Телефон, Email, Логін, Пароль
-        # Indices 0..7 (skipping react-select hidden inputs)
-        fields = [
-            (0, CFG["first_name"]),
-            (1, CFG["last_name"]),
-            (2, CFG["patronymic"]),
-            (3, CFG["company_code"]),
-            (4, CFG["phone"]),
-            (5, CFG["email"]),
-            (6, CFG["login"]),
-        ]
+        # Detect which fields are present
+        body_labels = await page.evaluate("() => document.body.innerText")
+        has_code  = "Код компанії" in body_labels
+        has_login = "Логін" in body_labels
+        print(f"[step3] has_code={has_code} has_login={has_login}", flush=True)
+
+        # Build field list dynamically based on form type
+        # Фізична особа: Ім'я, Прізвище, По батькові, Телефон, Email
+        # Підприємець:   Ім'я, Прізвище, По батькові, Код компанії, Телефон, Email, Логін
+        idx = 0
+        fields = []
+        for val in [CFG["first_name"], CFG["last_name"], CFG["patronymic"]]:
+            fields.append((idx, val)); idx += 1
+        if has_code:
+            fields.append((idx, CFG["company_code"])); idx += 1
+        fields.append((idx, CFG["phone"])); idx += 1
+        fields.append((idx, CFG["email"])); idx += 1
+        if has_login:
+            fields.append((idx, CFG["login"])); idx += 1
         for idx, val in fields:
             try:
                 await fill_input_nth(page, idx, val)
@@ -177,36 +185,34 @@ async def main():
             except Exception as e:
                 print(f"[step3] input[{idx}] error: {e}", flush=True)
 
-        # "Звідки дізналися про нас?" — click visible dropdown trigger then pick option
+        # "Звідки дізналися про нас?" — click the react-select control via JS
         try:
-            # Find by text label then click the sibling dropdown
-            referral_clicked = False
-            for approach in [
-                'text="Звідки дізналися про нас?"',
-                '[class*="select"]:has-text("Оберіть")',
-                '[class*="Select"]:has-text("Оберіть")',
-            ]:
-                loc = page.locator(approach).first
-                if await loc.count() > 0:
-                    await loc.click(timeout=3000)
-                    await page.wait_for_timeout(600)
-                    referral_clicked = True
-                    print(f"[step3] referral dropdown clicked via: {approach}", flush=True)
-                    break
-            if not referral_clicked:
-                # JS click on any visible element containing "Оберіть"
-                await page.evaluate("""() => {
-                    const all = [...document.querySelectorAll('*')];
-                    const el = all.find(e => e.textContent.trim() === 'Оберіть' && e.offsetParent);
-                    if (el) el.click();
-                }""")
-                await page.wait_for_timeout(600)
+            clicked = await page.evaluate("""() => {
+                // Find element with exact text 'Оберіть' that is visible
+                const els = [...document.querySelectorAll('*')].filter(
+                    e => e.childNodes.length === 1 &&
+                         e.childNodes[0].nodeType === 3 &&
+                         e.textContent.trim() === 'Оберіть' &&
+                         e.offsetParent !== null
+                );
+                if (els.length > 0) { els[0].click(); return true; }
+                // Fallback: click any div/span containing 'Оберіть'
+                const fb = [...document.querySelectorAll('div,span')].find(
+                    e => e.textContent.trim() === 'Оберіть' && e.offsetParent !== null
+                );
+                if (fb) { fb.click(); return true; }
+                return false;
+            }""")
+            print(f"[step3] referral click JS: {clicked}", flush=True)
+            await page.wait_for_timeout(700)
             opt_ref = page.locator('[class*="option"]').first
             if await opt_ref.count() > 0:
                 txt_ref = await opt_ref.text_content()
                 print(f"[step3] referral option: {txt_ref}", flush=True)
                 await opt_ref.click(timeout=3000)
-                await page.wait_for_timeout(300)
+                await page.wait_for_timeout(400)
+            else:
+                print("[step3] no referral options appeared", flush=True)
         except Exception as e:
             print(f"[step3] referral error: {e}", flush=True)
 
